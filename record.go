@@ -65,7 +65,8 @@ func Marshal(dst []byte, timestamp int64, key, value []byte, isTombstone bool) (
 	return dst, nil
 }
 
-// Unmarshal reads one record and checks its crc.
+// Unmarshal reads one record from data. It returns header, key,
+// value, bytes used and error. Value is nil for a tombstone.
 func Unmarshal(data []byte) (Header, []byte, []byte, int, error) {
 	if len(data) < HeaderSize {
 		return Header{}, nil, nil, 0, ErrTooSmall

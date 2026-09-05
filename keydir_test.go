@@ -7,7 +7,7 @@ import (
 
 func TestKeydirBasic(t *testing.T) {
 	kd := newKeydir()
-	kd.put("a", entry{fileID: 1, offset: 10, size: 5, timestamp: 100})
+	kd.put("a", entry{fileID: 1, offset: 10, size: 5})
 	e, ok := kd.get("a")
 	if !ok || e.offset != 10 {
 		t.Fatalf("want entry, got %v %v", e, ok)
@@ -20,9 +20,9 @@ func TestKeydirBasic(t *testing.T) {
 
 func TestKeydirSnapshotIsolated(t *testing.T) {
 	kd := newKeydir()
-	kd.put("a", entry{fileID: 1, timestamp: 1})
+	kd.put("a", entry{fileID: 1})
 	snap := kd.snapshot()
-	kd.put("b", entry{fileID: 1, timestamp: 2})
+	kd.put("b", entry{fileID: 1})
 	if _, ok := snap["b"]; ok {
 		t.Fatal("snapshot should not see new keys")
 	}

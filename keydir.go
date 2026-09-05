@@ -7,11 +7,9 @@ import (
 
 // entry tells us where the latest value for a key is.
 type entry struct {
-	fileID    int64
-	offset    int64
-	size      int32
-	timestamp int64
-	tombstone bool
+	fileID int64
+	offset int64
+	size   int32
 }
 
 // keydir is the in-memory map from key to its latest entry.
