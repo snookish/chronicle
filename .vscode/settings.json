@@ -11,6 +11,7 @@
     "goimports",
     "golangci",
     "keydir",
+    "Println",
     "serr",
     "snookish",
     "staticcheck",

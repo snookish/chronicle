@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help build run test test-unit cover bench lint fmt tidy vet clean
+.PHONY: help build run test test-unit cover bench lint fmt tidy vet clean examples
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -41,3 +41,10 @@ vet: ## Run go vet
 
 clean: ## Clean artifacts and coverage files
 	rm -rf bin/ coverage.out coverage.html
+
+examples: ## Run all examples
+	go run ./examples/basic
+	@echo "---"
+	go run ./examples/concurrent
+	@echo "---"
+	go run ./examples/sync
