@@ -170,9 +170,41 @@ func (db *DB) Put(key, value []byte) error {
 	return nil
 }
 
+// Delete writes a tombstone so the key goes away on replay too.
+func (db *DB) Delete(key []byte) error {
+	if len(key) == 0 || len(key) > db.config.maxKeyBytes {
+		return ErrBadKey
+	}
+
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	if db.isClosed {
+		return ErrClosed
+	}
+
+	record, err := Marshal(nil, db.config.clock.Now(), key, nil, true)
+	if err != nil {
+		return fmt.Errorf("marshal tombstone: %w", err)
+	}
+
+	if _, err := db.activeFile.Write(record); err != nil {
+		return fmt.Errorf("write tombstone: %w", err)
+	}
+
+	if db.config.syncOnWrite {
+		if err := db.activeFile.Sync(); err != nil {
+			return fmt.Errorf("sync tombstone: %w", err)
+		}
+	}
+
+	db.nextOffset += int64(len(record))
+	db.index.delete(string(key))
+	return nil
+}
+
 // Get gets the latest value for a key.
 func (db *DB) Get(key []byte) ([]byte, error) {
-	if len(key) == 0 {
+	if len(key) == 0 || len(key) > db.config.maxKeyBytes {
 		return nil, ErrBadKey
 	}
 
