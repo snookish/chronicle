@@ -261,6 +261,47 @@ func (db *DB) Get(key []byte) ([]byte, error) {
 	return out, nil
 }
 
+// Fold walks every live key. The snapshot is taken up front so it doesn't block writes long.
+func (db *DB) Fold(fn func(key, value []byte) error) error {
+	if fn == nil {
+		return nil
+	}
+	db.mu.RLock()
+	if db.isClosed {
+		db.mu.RUnlock()
+		return ErrClosed
+	}
+
+	snapshot := db.index.snapshot()
+	db.mu.RUnlock()
+
+	path := dataFilePath(db.directory)
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open data file: %w", err)
+	}
+	defer func() {
+		_ = file.Close()
+	}()
+
+	for k, ent := range snapshot {
+		buffer := make([]byte, ent.size)
+		if _, err := file.ReadAt(buffer, ent.offset); err != nil {
+			return fmt.Errorf("read record for %q: %w", k, err)
+		}
+
+		_, _, value, _, err := Unmarshal(buffer)
+		if err != nil {
+			return fmt.Errorf("decode record for %q: %w", k, err)
+		}
+
+		if err := fn([]byte(k), value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Close flushes and closes the file.
 func (db *DB) Close() error {
 	db.mu.Lock()
