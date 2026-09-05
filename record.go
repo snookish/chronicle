@@ -21,6 +21,7 @@ var (
 	ErrTooSmall  = errors.New("record: too small for header")
 )
 
+// Header is the 20 byte header at the start of each record.
 type Header struct {
 	CRC         uint32
 	Timestamp   int64
@@ -29,22 +30,21 @@ type Header struct {
 	IsTombstone bool
 }
 
-// Marshal builds a record from the given key and value.
-// If isTombstone is true the value is ignored and a delete marker is written.
-func Marshal(dst []byte, ts int64, key, value []byte, isTombstone bool) ([]byte, error) {
-	ksz := uint32(len(key))
-	vsz := uint32(len(value))
+// Marshal makes a full record from key and value.
+func Marshal(dst []byte, timestamp int64, key, value []byte, isTombstone bool) ([]byte, error) {
+	keySize := uint32(len(key))
+	valueSize := uint32(len(value))
 	if isTombstone {
-		vsz = tombstoneMask
+		valueSize = tombstoneMask
 	}
 
-	var hdr [HeaderSize]byte
-	binary.LittleEndian.PutUint64(hdr[4:12], uint64(ts))
-	binary.LittleEndian.PutUint32(hdr[12:16], ksz)
-	binary.LittleEndian.PutUint32(hdr[16:20], vsz)
+	var header [HeaderSize]byte
+	binary.LittleEndian.PutUint64(header[4:12], uint64(timestamp))
+	binary.LittleEndian.PutUint32(header[12:16], keySize)
+	binary.LittleEndian.PutUint32(header[16:20], valueSize)
 
 	crc := crc32.NewIEEE()
-	if _, err := crc.Write(hdr[4:]); err != nil {
+	if _, err := crc.Write(header[4:]); err != nil {
 		return nil, err
 	}
 	if _, err := crc.Write(key); err != nil {
@@ -55,9 +55,9 @@ func Marshal(dst []byte, ts int64, key, value []byte, isTombstone bool) ([]byte,
 			return nil, err
 		}
 	}
-	binary.LittleEndian.PutUint32(hdr[0:4], crc.Sum32())
+	binary.LittleEndian.PutUint32(header[0:4], crc.Sum32())
 
-	dst = append(dst, hdr[:]...)
+	dst = append(dst, header[:]...)
 	dst = append(dst, key...)
 	if !isTombstone {
 		dst = append(dst, value...)
@@ -65,37 +65,35 @@ func Marshal(dst []byte, ts int64, key, value []byte, isTombstone bool) ([]byte,
 	return dst, nil
 }
 
-// Unmarshal reads one record from b and checks the crc.
-// Returns the header, key, value and how many bytes were used.
-func Unmarshal(b []byte) (Header, []byte, []byte, int, error) {
-	if len(b) < HeaderSize {
+// Unmarshal reads one record and checks its crc.
+func Unmarshal(data []byte) (Header, []byte, []byte, int, error) {
+	if len(data) < HeaderSize {
 		return Header{}, nil, nil, 0, ErrTooSmall
 	}
-	crcWant := binary.LittleEndian.Uint32(b[0:4])
-	ts := int64(binary.LittleEndian.Uint64(b[4:12]))
-	ksz := binary.LittleEndian.Uint32(b[12:16])
-	vszRaw := binary.LittleEndian.Uint32(b[16:20])
+	wantCRC := binary.LittleEndian.Uint32(data[0:4])
+	timestamp := int64(binary.LittleEndian.Uint64(data[4:12]))
+	keySize := binary.LittleEndian.Uint32(data[12:16])
+	rawValueSize := binary.LittleEndian.Uint32(data[16:20])
 
-	isTombstone := vszRaw&tombstoneMask != 0
-	vsz := vszRaw & maxValueLen
+	isTombstone := rawValueSize&tombstoneMask != 0
+	valueSize := rawValueSize & maxValueLen
 
-	need := HeaderSize + int(ksz) + int(vsz)
+	need := HeaderSize + int(keySize) + int(valueSize)
 	if isTombstone {
-		need = HeaderSize + int(ksz)
+		need = HeaderSize + int(keySize)
 	}
-	if len(b) < need {
+	if len(data) < need {
 		return Header{}, nil, nil, 0, ErrTooSmall
 	}
 
+	key := data[HeaderSize : HeaderSize+int(keySize)]
 	var value []byte
-	key := b[HeaderSize : HeaderSize+int(ksz)]
-
 	if !isTombstone {
-		value = b[HeaderSize+int(ksz) : need]
+		value = data[HeaderSize+int(keySize) : need]
 	}
 
 	crc := crc32.NewIEEE()
-	if _, err := crc.Write(b[4:20]); err != nil {
+	if _, err := crc.Write(data[4:20]); err != nil {
 		return Header{}, nil, nil, 0, err
 	}
 	if _, err := crc.Write(key); err != nil {
@@ -106,21 +104,21 @@ func Unmarshal(b []byte) (Header, []byte, []byte, int, error) {
 			return Header{}, nil, nil, 0, err
 		}
 	}
-	if crc.Sum32() != crcWant {
+	if crc.Sum32() != wantCRC {
 		return Header{}, nil, nil, 0, ErrCorrupt
 	}
 
 	h := Header{
-		CRC:         crcWant,
-		Timestamp:   ts,
-		KeySize:     ksz,
-		ValueSize:   vszRaw,
+		CRC:         wantCRC,
+		Timestamp:   timestamp,
+		KeySize:     keySize,
+		ValueSize:   rawValueSize,
 		IsTombstone: isTombstone,
 	}
 	return h, key, value, need, nil
 }
 
-// ValueLen is the logical value length, 0 for a tombstone.
+// ValueLen returns the real value length, 0 for a tombstone.
 func (h Header) ValueLen() int {
 	return int(h.ValueSize & maxValueLen)
 }

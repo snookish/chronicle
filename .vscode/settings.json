@@ -8,6 +8,7 @@
     "gofmt",
     "goimports",
     "golangci",
+    "keydir",
     "snookish",
     "staticcheck",
     "tstamp",
