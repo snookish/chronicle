@@ -90,3 +90,67 @@ func (db *DB) Put(key, value []byte) error {
 
 	return nil
 }
+
+// Get finds the latest value for a key.
+func (db *DB) Get(key []byte) ([]byte, error) {
+	if len(key) == 0 {
+		return nil, ErrBadKey
+	}
+
+	db.mu.RLock()
+	if db.isClosed {
+		db.mu.RUnlock()
+		return nil, ErrClosed
+	}
+
+	entry, ok := db.index.get(string(key))
+	db.mu.RUnlock()
+	if !ok {
+		return nil, ErrNotFound
+	}
+
+	path := dataFilePath(db.directory)
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open data file: %w", err)
+	}
+	defer func() {
+		if cerr := file.Close(); cerr != nil {
+			_ = cerr
+		}
+	}()
+
+	buffer := make([]byte, entry.size)
+	if _, err := file.ReadAt(buffer, entry.offset); err != nil {
+		return nil, fmt.Errorf("read record: %w", err)
+	}
+
+	_, _, value, _, err := Unmarshal(buffer)
+	if err != nil {
+		return nil, fmt.Errorf("decode record: %w", err)
+	}
+
+	return value, nil
+}
+
+// Close flushes and closes the file.
+func (db *DB) Close() error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	if db.isClosed {
+		return ErrClosed
+	}
+
+	db.isClosed = true
+
+	if err := db.activeFile.Sync(); err != nil {
+		return fmt.Errorf("sync on close: %w", err)
+	}
+
+	if err := db.activeFile.Close(); err != nil {
+		return fmt.Errorf("close file: %w", err)
+	}
+
+	return nil
+}

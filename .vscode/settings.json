@@ -3,6 +3,7 @@
     "benchmem",
     "Bitcask",
     "bodyclose",
+    "cerr",
     "coverprofile",
     "errcheck",
     "gofmt",
