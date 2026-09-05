@@ -73,6 +73,20 @@ func Open(directory string, opts ...Option) (*DB, error) {
 // replay rebuilds the index from the file.
 // If the last record is torn or bad we cut it off so the file stays clean.
 func (db *DB) replay() error {
+	// Try hint first — it's faster and data file stays the source of truth.
+	if ok, err := readHint(db.directory, db.index); err != nil {
+		return err
+	} else if ok {
+		// Hint was good, just make sure offset matches file size.
+		path := dataFilePath(db.directory)
+		info, err := os.Stat(path)
+		if err == nil {
+			db.nextOffset = info.Size()
+			_, _ = db.activeFile.Seek(db.nextOffset, 0)
+		}
+		return nil
+	}
+
 	path := dataFilePath(db.directory)
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -149,6 +163,10 @@ func (db *DB) Put(key, value []byte) error {
 		return fmt.Errorf("marshal record: %w", err)
 	}
 
+	if db.nextOffset+int64(len(record)) > db.config.maxDataFileBytes {
+		return fmt.Errorf("data file too large: %w", ErrBadKey)
+	}
+
 	offset := db.nextOffset
 	if _, err := db.activeFile.Write(record); err != nil {
 		return fmt.Errorf("write record: %w", err)
@@ -185,6 +203,10 @@ func (db *DB) Delete(key []byte) error {
 	record, err := Marshal(nil, db.config.clock.Now(), key, nil, true)
 	if err != nil {
 		return fmt.Errorf("marshal tombstone: %w", err)
+	}
+
+	if db.nextOffset+int64(len(record)) > db.config.maxDataFileBytes {
+		return fmt.Errorf("data file too large: %w", ErrBadKey)
 	}
 
 	if _, err := db.activeFile.Write(record); err != nil {
@@ -334,6 +356,11 @@ func (db *DB) Close() error {
 
 	if err := db.activeFile.Close(); err != nil {
 		return fmt.Errorf("close file: %w", err)
+	}
+
+	// Write hint so next open is fast. Data file is still the truth.
+	if err := writeHint(db.directory, db.index); err != nil {
+		return fmt.Errorf("write hint: %w", err)
 	}
 
 	return nil
