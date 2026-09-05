@@ -202,6 +202,23 @@ func (db *DB) Delete(key []byte) error {
 	return nil
 }
 
+// Exists checks if a key is present without reading the value.
+func (db *DB) Exists(key []byte) (bool, error) {
+	if len(key) == 0 || len(key) > db.config.maxKeyBytes {
+		return false, ErrBadKey
+	}
+
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	if db.isClosed {
+		return false, ErrClosed
+	}
+
+	_, ok := db.index.get(string(key))
+	return ok, nil
+}
+
 // Get gets the latest value for a key.
 func (db *DB) Get(key []byte) ([]byte, error) {
 	if len(key) == 0 || len(key) > db.config.maxKeyBytes {
