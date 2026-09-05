@@ -33,9 +33,23 @@ func Open(directory string, opts ...Option) (*DB, error) {
 	}
 
 	path := dataFilePath(directory)
+
+	// If the file is new we need the directory to be durable.
+	var isNew bool
+	if _, serr := os.Stat(path); serr != nil && os.IsNotExist(serr) {
+		isNew = true
+	}
+
 	file, offset, err := openDataFile(path)
 	if err != nil {
 		return nil, err
+	}
+
+	if isNew {
+		if err := syncDir(directory); err != nil {
+			_ = file.Close()
+			return nil, err
+		}
 	}
 
 	db := &DB{
@@ -46,10 +60,75 @@ func Open(directory string, opts ...Option) (*DB, error) {
 		nextOffset: offset,
 	}
 
+	if err := db.replay(); err != nil {
+		if cerr := file.Close(); cerr != nil {
+			return nil, fmt.Errorf("close after replay failed: %w", cerr)
+		}
+		return nil, err
+	}
+
 	return db, nil
 }
 
-// Put appends a key and value to the log.
+// replay rebuilds the index from the file.
+// If the last record is torn or bad we cut it off so the file stays clean.
+func (db *DB) replay() error {
+	path := dataFilePath(db.directory)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read data file: %w", err)
+	}
+
+	var offset int64
+	for offset < int64(len(data)) {
+		header, key, _, size, err := Unmarshal(data[offset:])
+		if err != nil {
+			// Check if header itself claims a huge size, treat as torn tail.
+			if err == ErrTooSmall || err == ErrCorrupt {
+				if err := os.Truncate(path, offset); err != nil {
+					return fmt.Errorf("truncate torn tail at %d: %w", offset, err)
+				}
+				db.nextOffset = offset
+				if _, serr := db.activeFile.Seek(offset, 0); serr != nil {
+					return fmt.Errorf("seek after truncate: %w", serr)
+				}
+				break
+			}
+			return fmt.Errorf("replay failed at offset %d: %w", offset, err)
+		}
+
+		// Guard against absurd sizes that passed crc but exceed config.
+		if int(header.KeySize) > db.config.maxKeyBytes || header.ValueLen() > db.config.maxValueBytes {
+			if err := os.Truncate(path, offset); err != nil {
+				return fmt.Errorf("truncate oversize record at %d: %w", offset, err)
+			}
+			db.nextOffset = offset
+			if _, serr := db.activeFile.Seek(offset, 0); serr != nil {
+				return fmt.Errorf("seek after truncate: %w", serr)
+			}
+			break
+		}
+
+		if header.IsTombstone {
+			db.index.delete(string(key))
+		} else {
+			db.index.put(string(key), entry{
+				fileID: 1,
+				offset: offset,
+				size:   int32(size),
+			})
+		}
+		offset += int64(size)
+	}
+
+	db.nextOffset = offset
+	return nil
+}
+
+// Put writes a key and its value.
 func (db *DB) Put(key, value []byte) error {
 	if len(key) == 0 || len(key) > db.config.maxKeyBytes {
 		return ErrBadKey
@@ -91,7 +170,7 @@ func (db *DB) Put(key, value []byte) error {
 	return nil
 }
 
-// Get finds the latest value for a key.
+// Get gets the latest value for a key.
 func (db *DB) Get(key []byte) ([]byte, error) {
 	if len(key) == 0 {
 		return nil, ErrBadKey
@@ -115,9 +194,7 @@ func (db *DB) Get(key []byte) ([]byte, error) {
 		return nil, fmt.Errorf("open data file: %w", err)
 	}
 	defer func() {
-		if cerr := file.Close(); cerr != nil {
-			_ = cerr
-		}
+		_ = file.Close()
 	}()
 
 	buffer := make([]byte, entry.size)
@@ -130,7 +207,9 @@ func (db *DB) Get(key []byte) ([]byte, error) {
 		return nil, fmt.Errorf("decode record: %w", err)
 	}
 
-	return value, nil
+	out := make([]byte, len(value))
+	copy(out, value)
+	return out, nil
 }
 
 // Close flushes and closes the file.

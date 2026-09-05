@@ -2,7 +2,6 @@ package chronicle
 
 import "time"
 
-// Clock gives the current time in nanos.
 type Clock interface {
 	Now() int64
 }
@@ -63,7 +62,7 @@ func WithSyncOnWrite(v bool) Option {
 	return func(c *config) { c.syncOnWrite = v }
 }
 
-// WithClock sets a custom clock. Handy for tests.
+// WithClock sets a custom clock.
 func WithClock(clk Clock) Option {
 	return func(c *config) { c.clock = clk }
 }
