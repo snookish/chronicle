@@ -302,6 +302,21 @@ func (db *DB) Fold(fn func(key, value []byte) error) error {
 	return nil
 }
 
+// Sync forces the file to disk. Useful when syncOnWrite is off.
+func (db *DB) Sync() error {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	if db.isClosed {
+		return ErrClosed
+	}
+
+	if err := db.activeFile.Sync(); err != nil {
+		return fmt.Errorf("sync: %w", err)
+	}
+	return nil
+}
+
 // Close flushes and closes the file.
 func (db *DB) Close() error {
 	db.mu.Lock()

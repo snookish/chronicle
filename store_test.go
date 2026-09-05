@@ -523,3 +523,29 @@ func TestSyncOption(t *testing.T) {
 		t.Fatalf("get after reopen: %v", err)
 	}
 }
+
+func TestManualSync(t *testing.T) {
+	dir := t.TempDir()
+
+	db, err := Open(dir, WithSyncOnWrite(false))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	if err := db.Put([]byte("k"), []byte("v")); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+
+	if err := db.Sync(); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	if err := db.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	if err := db.Sync(); err != ErrClosed {
+		t.Fatalf("want ErrClosed after close, got %v", err)
+	}
+}
